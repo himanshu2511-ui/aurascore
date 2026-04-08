@@ -1,0 +1,12 @@
+sqlalchemy
+python-jose[cryptography]
+python-dotenv
+email-validator
+fastapi
+uvicorn
+python-multipart
+mediapipe
+numpy
+pillow
+pydantic
+passlib[argon2]

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+backend/venv/
+backend/__pycache__/
+*.pyc
+.env
+aurascore.db
+.DS_Store
