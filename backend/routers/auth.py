@@ -77,24 +77,27 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
         existing.name = body.name
         existing.hashed_password = hash_password(body.password)
         db.commit()
-        send_otp_email(body.email, body.name, otp)
+        sent = send_otp_email(body.email, body.name, otp)
+        if not sent:
+            raise HTTPException(status_code=500, detail="Failed to send OTP email. Please verify Render GMAIL configurations.")
         return {"message": "OTP resent. Check your email."}
 
+    otp = generate_otp()
     user = User(
         name=body.name,
         email=body.email,
         hashed_password=hash_password(body.password),
-        is_verified=True,
+        otp_code=otp,
+        otp_expires_at=otp_expiry(),
     )
     db.add(user)
     db.commit()
     
-    token = create_access_token({"sub": user.email})
-    return TokenResponse(
-        access_token=token,
-        user_name=user.name,
-        user_email=user.email,
-    )
+    sent = send_otp_email(body.email, body.name, otp)
+    if not sent:
+        raise HTTPException(status_code=500, detail="Failed to send OTP email. Please verify Render GMAIL configurations.")
+    
+    return {"message": "Account created. Check your email for the 6-digit OTP."}
 
 
 @router.post("/verify")
@@ -127,6 +130,9 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.is_verified:
+        raise HTTPException(status_code=403, detail="Email not verified. Please check your inbox.")
+    
     token = create_access_token({"sub": user.email})
     return TokenResponse(
         access_token=token,
@@ -147,7 +153,9 @@ def resend_otp(body: ResendRequest, db: Session = Depends(get_db)):
     user.otp_code = otp
     user.otp_expires_at = otp_expiry()
     db.commit()
-    send_otp_email(body.email, user.name, otp)
+    sent = send_otp_email(body.email, user.name, otp)
+    if not sent:
+        raise HTTPException(status_code=500, detail="Failed to send OTP email. Server misconfigured.")
     return {"message": "New OTP sent. Check your email."}
 
 
