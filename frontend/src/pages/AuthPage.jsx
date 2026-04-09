@@ -2,7 +2,10 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+let API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+if (API.endsWith('/')) API = API.slice(0, -1);
+if (!API.startsWith('http')) API = `https://${API}`;
+
 
 const slide = {
     initial: { opacity: 0, x: 60 },
