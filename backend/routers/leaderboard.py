@@ -8,7 +8,7 @@ from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/leaderboard", tags=["leaderboard"])
 
-@router.get("/")
+@router.get("")
 def get_leaderboard(db: Session = Depends(get_db)):
     # Get top 50 users ordered by aura_score descending
     top_users = db.query(User).filter(User.aura_score > 0)\

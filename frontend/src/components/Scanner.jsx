@@ -144,14 +144,20 @@ const Scanner = ({ onResult, onStatusChange, onSessionComplete }) => {
 
             {/* Progress bar */}
             {tracking && (
-                <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 4, height: 4, marginBottom: '1rem', overflow: 'hidden' }}>
-                    <div style={{
-                        height: '100%',
-                        width: `${progress}%`,
-                        background: 'linear-gradient(90deg, #9b5de5, #f0c040)',
-                        borderRadius: 4,
-                        transition: 'width 1s linear'
-                    }} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1.2rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 700, color: '#f0c040' }}>
+                        <span>Analysis Progress</span>
+                        <span>{Math.round(progress)}%</span>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 6, height: 8, overflow: 'hidden' }}>
+                        <div style={{
+                            height: '100%',
+                            width: `${progress}%`,
+                            background: 'linear-gradient(90deg, #9b5de5, #f0c040)',
+                            borderRadius: 6,
+                            transition: 'width 1s linear'
+                        }} />
+                    </div>
                 </div>
             )}
 
@@ -173,6 +179,17 @@ const Scanner = ({ onResult, onStatusChange, onSessionComplete }) => {
                     <div className="scan-corner bl" />
                     <div className="scan-corner br" />
                 </div>
+
+                {!tracking && status !== 'done' && (
+                    <div style={{
+                        position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                        background: 'rgba(0,0,0,0.6)', padding: '0.8rem 1.2rem', borderRadius: '12px',
+                        color: 'white', fontSize: '0.85rem', fontWeight: 600, textAlign: 'center',
+                        zIndex: 15, border: '1px solid rgba(255,255,255,0.1)'
+                    }}>
+                        🎯 Please place your face in the center of the window
+                    </div>
+                )}
 
                 {tracking && (
                     <div style={{
@@ -221,7 +238,7 @@ const Scanner = ({ onResult, onStatusChange, onSessionComplete }) => {
             )}
 
             <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.9rem', textAlign: 'center' }}>
-                🔒 All analysis runs locally — no images stored or transmitted externally.
+                🔒 End-to-End Encrypted for your assurance and trust. All analysis runs securely and privately.
             </p>
         </div>
     );
