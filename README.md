@@ -54,7 +54,7 @@ cp .env.example .env
 # Required for signup OTPs
 GMAIL_USER=your-email@gmail.com
 GMAIL_APP_PASSWORD=your-16-digit-app-password
-JWT_SECRET=super_secret_jwt_key
+JWT_SECRET=YOUR_secret_jwt_key
 
 # Optional (Defaults to local SQLite)
 DATABASE_URL=postgresql://user:password@hostname/db_name 
@@ -104,5 +104,7 @@ npm run dev
 
 ## 🛡️ License & Privacy
 All facial processing matrices are strictly loaded in memory and purged instantly. AuraScore does not log or warehouse personal media artifacts.
+
+VISIT :https://aurascore-eight.vercel.app/ ------FOR TRIAL
 
 *(Educational / Demo License)*
