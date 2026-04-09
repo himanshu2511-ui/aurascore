@@ -71,7 +71,7 @@ function SignupStep({ onSuccess, onSwitchLogin }) {
             });
             const data = await r.json();
             if (!r.ok) throw new Error(data.detail || 'Signup failed');
-            onSuccess(email, name);
+            onSuccess(data.access_token, { name: data.user_name, email: data.user_email });
         } catch (e) { setError(e.message); }
         setLoading(false);
     };
@@ -211,10 +211,8 @@ export default function AuthPage() {
     const [pendingEmail, setPendingEmail] = useState('');
     const [pendingName, setPendingName] = useState('');
 
-    const handleSignupSuccess = (email, name) => {
-        setPendingEmail(email);
-        setPendingName(name);
-        setStep('otp');
+    const handleSignupSuccess = (token, userData) => {
+        login(token, userData);
     };
 
     const handleVerifySuccess = (token, userData) => login(token, userData);

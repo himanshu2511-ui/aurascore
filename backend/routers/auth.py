@@ -80,18 +80,21 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
         send_otp_email(body.email, body.name, otp)
         return {"message": "OTP resent. Check your email."}
 
-    otp = generate_otp()
     user = User(
         name=body.name,
         email=body.email,
         hashed_password=hash_password(body.password),
-        otp_code=otp,
-        otp_expires_at=otp_expiry(),
+        is_verified=True,
     )
     db.add(user)
     db.commit()
-    send_otp_email(body.email, body.name, otp)
-    return {"message": "Account created. Check your email for the 6-digit OTP."}
+    
+    token = create_access_token({"sub": user.email})
+    return TokenResponse(
+        access_token=token,
+        user_name=user.name,
+        user_email=user.email,
+    )
 
 
 @router.post("/verify")
@@ -124,9 +127,6 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    if not user.is_verified:
-        raise HTTPException(status_code=403, detail="Email not verified. Please check your inbox.")
-
     token = create_access_token({"sub": user.email})
     return TokenResponse(
         access_token=token,
