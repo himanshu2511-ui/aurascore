@@ -5,7 +5,7 @@ email-validator
 fastapi
 uvicorn
 python-multipart
-mediapipe
+mediapipe==0.10.14
 numpy
 pillow
 pydantic
