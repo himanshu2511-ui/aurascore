@@ -1,18 +1,18 @@
 import os
-import smtplib
-import ssl
+import json
 import threading
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import urllib.request
+import urllib.error
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Resend HTTP API (preferred — works on all cloud providers) ──
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+
+# ── Gmail SMTP fallback (only works locally / non-restricted hosts) ──
 GMAIL_USER = os.getenv("GMAIL_USER", "").strip()
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").strip()
-
-# ── Aggressive timeout: 8 seconds max per SMTP attempt ──
-_SMTP_TIMEOUT = 8
 
 
 def _build_otp_html(name: str, otp: str) -> str:
@@ -32,9 +32,9 @@ def _build_otp_html(name: str, otp: str) -> str:
         </tr>
         <tr>
           <td style="padding:36px 32px;">
-            <p style="color:#9ca3af;margin:0 0 6px;font-size:15px;">Hi {name},</p>
-            <h2 style="color:#f0c040;margin:0 0 20px;font-size:22px;font-weight:800;">Verify your email</h2>
-            <p style="color:#6b7280;line-height:1.7;margin:0 0 28px;font-size:14px;">
+            <p style="color:#9ca3af;margin:0 0 6px;">Hi {name},</p>
+            <h2 style="color:#f0c040;margin:0 0 20px;font-weight:800;">Verify your email</h2>
+            <p style="color:#6b7280;line-height:1.7;margin:0 0 28px;">
               Your verification code expires in <strong style="color:#f0c040;">15 minutes</strong>.
             </p>
             <div style="background:rgba(240,192,64,0.08);border:2px solid rgba(240,192,64,0.35);
@@ -51,60 +51,107 @@ def _build_otp_html(name: str, otp: str) -> str:
 </body></html>"""
 
 
-def _smtp_send(to_email: str, msg: MIMEMultipart) -> bool:
-    """Attempt to send email via Gmail SMTP with short timeouts. Returns True on success."""
-    # Try SSL (port 465), then STARTTLS (port 587)
-    for attempt, method in enumerate(("SSL", "STARTTLS"), 1):
-        try:
-            if method == "SSL":
-                ctx = ssl.create_default_context()
-                with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=_SMTP_TIMEOUT) as srv:
-                    srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-                    srv.sendmail(GMAIL_USER, to_email, msg.as_string())
-            else:
-                with smtplib.SMTP("smtp.gmail.com", 587, timeout=_SMTP_TIMEOUT) as srv:
-                    srv.ehlo()
-                    srv.starttls(context=ssl.create_default_context())
-                    srv.ehlo()
-                    srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-                    srv.sendmail(GMAIL_USER, to_email, msg.as_string())
-            print(f"[EMAIL OK] Sent to {to_email} via {method}")
+# ── Method 1: Resend HTTP API (recommended for cloud) ────────────────────
+def _send_via_resend(to_email: str, name: str, otp: str) -> bool:
+    """Send email using Resend's HTTP API. Works on ALL cloud providers."""
+    html = _build_otp_html(name, otp)
+    payload = json.dumps({
+        "from": "AuraScore <onboarding@resend.dev>",
+        "to": [to_email],
+        "subject": "Your AuraScore Verification Code",
+        "html": html,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            print(f"[EMAIL OK] Resend sent to {to_email}, id={result.get('id')}")
             return True
-        except smtplib.SMTPAuthenticationError as e:
-            print(f"[EMAIL AUTH FAIL] {e}")
-            return False  # Wrong creds — don't retry
-        except Exception as e:
-            print(f"[EMAIL] {method} failed: {e}")
-    print(f"[EMAIL FAIL] All attempts failed for {to_email}")
-    return False
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        print(f"[EMAIL FAIL] Resend HTTP {e.code}: {body}")
+        return False
+    except Exception as e:
+        print(f"[EMAIL FAIL] Resend error: {e}")
+        return False
 
 
-def send_otp_email(to_email: str, name: str, otp: str) -> bool:
-    """
-    Sends OTP email in a BACKGROUND THREAD so it never blocks the API response.
-    Always returns True immediately — the email sends asynchronously.
-    """
-    # Dev mode: no credentials configured
-    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
-        print(f"\n{'='*50}\n[DEV] OTP for {to_email}: {otp}\n{'='*50}\n")
-        return True
+# ── Method 2: Gmail SMTP fallback (local dev / unrestricted hosts) ───────
+def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
+    """Fallback: send via Gmail SMTP with tight timeouts."""
+    import smtplib
+    import ssl
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
 
-    # Build the email message
+    html = _build_otp_html(name, otp)
     msg = MIMEMultipart("alternative")
     msg["Subject"] = "Your AuraScore Verification Code"
     msg["From"]    = f"AuraScore <{GMAIL_USER}>"
     msg["To"]      = to_email
-    msg.attach(MIMEText(_build_otp_html(name, otp), "html", "utf-8"))
+    msg.attach(MIMEText(html, "html", "utf-8"))
 
-    # Fire-and-forget: send in a background thread
+    for method in ("SSL", "STARTTLS"):
+        try:
+            if method == "SSL":
+                ctx = ssl.create_default_context()
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=8) as s:
+                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                    s.sendmail(GMAIL_USER, to_email, msg.as_string())
+            else:
+                with smtplib.SMTP("smtp.gmail.com", 587, timeout=8) as s:
+                    s.ehlo(); s.starttls(context=ssl.create_default_context()); s.ehlo()
+                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                    s.sendmail(GMAIL_USER, to_email, msg.as_string())
+            print(f"[EMAIL OK] SMTP sent to {to_email} via {method}")
+            return True
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"[EMAIL AUTH FAIL] {e}")
+            return False
+        except Exception as e:
+            print(f"[EMAIL] SMTP {method} failed: {e}")
+    return False
+
+
+# ── Public API ───────────────────────────────────────────────────────────
+def send_otp_email(to_email: str, name: str, otp: str) -> bool:
+    """
+    Always returns True immediately. Email is sent in a background thread.
+    Priority: Resend API → Gmail SMTP → Dev-mode terminal print.
+    """
+    # Dev mode: nothing configured at all
+    if not RESEND_API_KEY and not GMAIL_USER:
+        print(f"\n{'='*50}\n[DEV] OTP for {to_email}: {otp}\n{'='*50}\n")
+        return True
+
     def _worker():
         try:
-            _smtp_send(to_email, msg)
+            # Try Resend first (HTTP — works everywhere)
+            if RESEND_API_KEY:
+                if _send_via_resend(to_email, name, otp):
+                    return
+                print("[EMAIL] Resend failed, trying SMTP fallback...")
+
+            # Fallback to SMTP (only works on unrestricted hosts)
+            if GMAIL_USER and GMAIL_APP_PASSWORD:
+                if _send_via_smtp(to_email, name, otp):
+                    return
+
+            print(f"[EMAIL FAIL] Could not deliver OTP to {to_email}")
+            print(f"[DEV FALLBACK] OTP code: {otp}")
         except Exception as e:
             print(f"[EMAIL THREAD ERROR] {e}")
+            print(f"[DEV FALLBACK] OTP code: {otp}")
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
-
-    # Return immediately — never block the API
     return True
