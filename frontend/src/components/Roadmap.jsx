@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const ICON_MAP = {
+    SKIN: '🔬', GROOM: '💇', FIT: '🏋️', STAR: '✨',
+};
+const resolveIcon = (icon) => ICON_MAP[icon] || icon;
+
 const WeekCard = ({ week, index }) => {
     const [open, setOpen] = useState(index === 0);
 
@@ -13,7 +18,7 @@ const WeekCard = ({ week, index }) => {
             transition={{ delay: index * 0.1 }}
         >
             <div className="week-header">
-                <span className="week-icon">{week.icon}</span>
+                <span className="week-icon">{resolveIcon(week.icon)}</span>
                 <div>
                     <div className="week-label">{week.week}</div>
                     <div className="week-focus">{week.focus}</div>

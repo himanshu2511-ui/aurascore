@@ -48,7 +48,8 @@ async def analyze_face_endpoint(
     contents = await image.read()
     img = Image.open(io.BytesIO(contents)).convert("RGB")
 
-    vision_result = analyze_face(img)
+    gender = (current_user.gender or "male").lower()
+    vision_result = analyze_face(img, gender=gender)
 
     if not vision_result:
         return GlowUpScorecard(
@@ -57,13 +58,13 @@ async def analyze_face_endpoint(
             face_shape="Unknown",
             features=[],
             skin=analyze_skin(img, None, img.width, img.height),
-            grooming=get_grooming_recommendations("Oval"),
-            roadmap=generate_roadmap("Needs Attention", "Oval", 70, 60),
-            disclaimer="⚠️ No face detected. Please center your face clearly in the frame.",
+            grooming=get_grooming_recommendations("Oval", gender=gender),
+            roadmap=generate_roadmap("Needs Attention", "Oval", 70, 60, gender=gender),
+            disclaimer="No face detected. Please center your face clearly in the frame.",
         )
 
     skin = analyze_skin(img, vision_result["raw_landmarks"], vision_result["img_width"], vision_result["img_height"])
-    grooming = get_grooming_recommendations(vision_result["face_shape"])
+    grooming = get_grooming_recommendations(vision_result["face_shape"], gender=gender)
     skin_bonus = (100 - skin.texture_score) // 15
     potential_boosted = min(100, vision_result["potential_score"] + skin_bonus)
     roadmap = generate_roadmap(
@@ -71,6 +72,7 @@ async def analyze_face_endpoint(
         face_shape=vision_result["face_shape"],
         grooming_potential=potential_boosted,
         skin_score=skin.texture_score,
+        gender=gender,
     )
 
     if current_user.aura_score is None or potential_boosted > current_user.aura_score:

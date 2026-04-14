@@ -1,9 +1,10 @@
 from models.schemas import GroomingRecommendation
 
-GROOMING_DB = {
+# ── Male grooming database ────────────────────────────────────────────────────
+MALE_GROOMING_DB = {
     "Oval": {
-        "hairstyles": ["Textured Crop", "Side Part", "Quiff", "Any length works!"],
-        "beard_styles": ["Light Stubble", "Short Boxed Beard", "Clean Shaven"],
+        "hairstyles": ["Textured Crop", "Side Part", "Quiff", "Slicked Back", "Any length works!"],
+        "beard_styles": ["Light Stubble", "Short Boxed Beard", "Clean Shaven", "Full Beard"],
         "glasses_frames": ["Wayfarer", "Aviator", "Round frames", "Almost any frame suits you"],
         "style_tips": [
             "Oval is the most versatile face shape — you can rock nearly any hairstyle.",
@@ -29,7 +30,7 @@ GROOMING_DB = {
         ]
     },
     "Heart": {
-        "hairstyles": ["Side Part", "Curtain Bangs", "Medium Length", "Chin-length Bob"],
+        "hairstyles": ["Side Part", "Curtain Bangs", "Medium Length", "Bro Flow"],
         "beard_styles": ["Full Beard (adds jaw width)", "Mutton Chops", "Stubble"],
         "glasses_frames": ["Bottom-heavy frames", "Light-colored frames", "Oval"],
         "style_tips": [
@@ -57,8 +58,69 @@ GROOMING_DB = {
     },
 }
 
-def get_grooming_recommendations(face_shape: str) -> GroomingRecommendation:
-    data = GROOMING_DB.get(face_shape, GROOMING_DB["Oval"])
+# ── Female grooming database ──────────────────────────────────────────────────
+FEMALE_GROOMING_DB = {
+    "Oval": {
+        "hairstyles": ["Beach Waves", "Long Layers", "Blunt Bob", "Half-Up Half-Down", "Any style works!"],
+        "beard_styles": [],  # N/A
+        "glasses_frames": ["Cat-eye", "Wayfarer", "Aviator", "Almost any frame suits you"],
+        "style_tips": [
+            "Oval is the ideal feminine face shape — most hairstyles flatter you naturally.",
+            "Soft curls and layers enhance balanced proportions beautifully.",
+        ]
+    },
+    "Round": {
+        "hairstyles": ["Long Straight Layers", "Side-Swept Bangs", "Lob (Long Bob)", "High Ponytail", "Loose Bun"],
+        "beard_styles": [],
+        "glasses_frames": ["Angular frames", "Rectangle", "Cat-eye"],
+        "style_tips": [
+            "Elongating styles like long straight layers slim the face visually.",
+            "Avoid blunt bobs that end at the chin — they emphasize width.",
+        ]
+    },
+    "Square": {
+        "hairstyles": ["Soft Waves", "Side Part with Volume", "Wispy Bangs", "Long Layers", "Cascading Curls"],
+        "beard_styles": [],
+        "glasses_frames": ["Oval frames", "Round frames", "Rimless"],
+        "style_tips": [
+            "Soft, romantic styles with movement and volume flatter square faces beautifully.",
+            "Avoid blunt, jaw-length cuts — they emphasize angularity.",
+        ]
+    },
+    "Heart": {
+        "hairstyles": ["Chin-Length Bob", "Lob with Waves", "Curtain Bangs", "Side-Swept Bangs"],
+        "beard_styles": [],
+        "glasses_frames": ["Bottom-heavy frames", "Round frames", "Oval"],
+        "style_tips": [
+            "Add volume at the jawline to balance a wider forehead.",
+            "Curtain bangs add softness to a prominent forehead beautifully.",
+        ]
+    },
+    "Diamond": {
+        "hairstyles": ["Side-Swept Bangs", "Volume at Crown", "Chin-Length Bob", "Wispy Layers"],
+        "beard_styles": [],
+        "glasses_frames": ["Oval frames", "Cat-eye", "Rimless"],
+        "style_tips": [
+            "Add width at the forehead and chin to soften prominent cheekbones.",
+            "Avoid sleek, center-parted styles that draw attention to the cheeks.",
+        ]
+    },
+    "Oblong": {
+        "hairstyles": ["Beachy Waves", "Blunt Bob", "Curtain Bangs", "Curly Styles", "Short Layers"],
+        "beard_styles": [],
+        "glasses_frames": ["Oversized square", "Wayfarer", "Geometric"],
+        "style_tips": [
+            "Width-adding styles like beach waves and full bobs create beautiful balance.",
+            "Avoid long, sleek styles that elongate the face further.",
+        ]
+    },
+}
+
+
+def get_grooming_recommendations(face_shape: str, gender: str = "male") -> GroomingRecommendation:
+    gender = (gender or "male").lower()
+    db = FEMALE_GROOMING_DB if gender == "female" else MALE_GROOMING_DB
+    data = db.get(face_shape, db["Oval"])
     return GroomingRecommendation(
         face_shape=face_shape,
         hairstyles=data["hairstyles"],

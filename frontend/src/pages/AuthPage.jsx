@@ -57,6 +57,7 @@ function SignupStep({ onSuccess, onSwitchLogin }) {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [pass, setPass] = useState('');
+    const [gender, setGender] = useState('male');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
@@ -67,11 +68,11 @@ function SignupStep({ onSuccess, onSwitchLogin }) {
         try {
             const r = await fetch(`${API}/auth/signup`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, email, password: pass }),
+                body: JSON.stringify({ name, email, password: pass, gender }),
             });
             const data = await r.json();
             if (!r.ok) throw new Error(data.detail || 'Signup failed');
-            onSuccess(email, name);
+            onSuccess(email, name, gender);
         } catch (e) { setError(e.message); }
         setLoading(false);
     };
@@ -83,6 +84,29 @@ function SignupStep({ onSuccess, onSwitchLogin }) {
             <InputField id="su-name" label="Full Name" value={name} onChange={e => setName(e.target.value)} placeholder="Alex Johnson" />
             <InputField id="su-email" label="Email Address" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="alex@example.com" />
             <InputField id="su-pass" label="Password" type="password" value={pass} onChange={e => setPass(e.target.value)} placeholder="Min 6 characters" />
+            {/* Gender Selector */}
+            <div style={{ marginBottom: '1.1rem' }}>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '0.5rem' }}>I am a</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {[{ key: 'male', icon: '♂', label: 'Male' }, { key: 'female', icon: '♀', label: 'Female' }].map(g => (
+                        <button
+                            key={g.key}
+                            type="button"
+                            onClick={() => setGender(g.key)}
+                            style={{
+                                flex: 1, padding: '0.7rem', borderRadius: '10px', cursor: 'pointer',
+                                fontFamily: 'inherit', fontWeight: 700, fontSize: '0.9rem',
+                                border: gender === g.key ? '2px solid #f0c040' : '2px solid rgba(255,255,255,0.1)',
+                                background: gender === g.key ? 'rgba(240,192,64,0.12)' : 'rgba(255,255,255,0.04)',
+                                color: gender === g.key ? '#f0c040' : '#6b7280',
+                                transition: 'all 0.2s',
+                            }}
+                        >
+                            <span style={{ marginRight: '0.3rem' }}>{g.icon}</span>{g.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
             {error && <p style={{ color: '#ff4d6d', fontSize: '0.82rem', marginBottom: '0.5rem' }}>⚠ {error}</p>}
             <SubmitBtn label="Create Account & Send OTP" loading={loading} onClick={handleSubmit} />
             <p style={{ textAlign: 'center', marginTop: '1.2rem', fontSize: '0.85rem', color: '#6b7280' }}>
@@ -210,15 +234,17 @@ export default function AuthPage() {
     const [step, setStep] = useState('signup'); // 'signup' | 'otp' | 'login'
     const [pendingEmail, setPendingEmail] = useState('');
     const [pendingName, setPendingName] = useState('');
+    const [pendingGender, setPendingGender] = useState('male');
 
-    const handleSignupSuccess = (email, name) => {
+    const handleSignupSuccess = (email, name, gender) => {
         setPendingEmail(email);
         setPendingName(name);
+        setPendingGender(gender || 'male');
         setStep('otp');
     };
 
-    const handleVerifySuccess = (token, userData) => login(token, userData);
-    const handleLoginSuccess = (token, userData) => login(token, userData);
+    const handleVerifySuccess = (token, userData) => login(token, { ...userData, gender: pendingGender });
+    const handleLoginSuccess  = (token, userData) => login(token, { ...userData, gender: userData.user_gender || 'male' });
 
     return (
         <div style={{

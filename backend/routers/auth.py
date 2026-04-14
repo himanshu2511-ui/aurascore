@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from datetime import datetime
+from typing import Optional, Literal
 from pydantic import BaseModel, EmailStr, ConfigDict
 
 from db.database import get_db
@@ -20,6 +21,7 @@ class SignupRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
+    gender: Optional[Literal["male", "female"]] = "male"
 
 class VerifyRequest(BaseModel):
     email: EmailStr
@@ -38,12 +40,14 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user_name: str
     user_email: str
+    user_gender: str = "male"
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     name: str
     email: str
+    gender: str
     is_verified: bool
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -87,6 +91,7 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
         name=body.name,
         email=body.email,
         hashed_password=hash_password(body.password),
+        gender=body.gender or "male",
         otp_code=otp,
         otp_expires_at=otp_expiry(),
     )
@@ -122,6 +127,7 @@ def verify_email(body: VerifyRequest, db: Session = Depends(get_db)):
         access_token=token,
         user_name=user.name,
         user_email=user.email,
+        user_gender=user.gender or "male",
     )
 
 
@@ -138,6 +144,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         access_token=token,
         user_name=user.name,
         user_email=user.email,
+        user_gender=user.gender or "male",
     )
 
 
