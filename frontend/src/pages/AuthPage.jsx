@@ -2,9 +2,25 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 
-// API base — empty string uses Vite proxy in dev (proxies /auth/* to localhost:8000)
-// In production, set VITE_API_URL or configure your reverse proxy
+// API base — uses VITE_API_URL in production, empty string = Vite proxy in dev
 const API = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
+// Fetch wrapper with timeout + retry for cold Render starts
+async function fetchWithRetry(url, options = {}, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeout);
+      return res;
+    } catch (err) {
+      clearTimeout(timeout);
+      if (i === retries - 1) throw new Error('Server is unreachable. It may be waking up — please wait 30 seconds and try again.');
+      await new Promise(r => setTimeout(r, 4000));
+    }
+  }
+}
 
 
 const slide = {
@@ -66,7 +82,7 @@ function SignupStep({ onSuccess, onSwitchLogin }) {
         if (pass.length < 6) { setError('Password must be at least 6 characters.'); return; }
         setLoading(true); setError('');
         try {
-            const r = await fetch(`${API}/auth/signup`, {
+            const r = await fetchWithRetry(`${API}/auth/signup`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, email, password: pass, gender }),
             });
@@ -128,7 +144,7 @@ function OtpStep({ email, name, onSuccess, onResend }) {
         if (otp.length !== 6) { setError('Enter the 6-digit code.'); return; }
         setLoading(true); setError('');
         try {
-            const r = await fetch(`${API}/auth/verify`, {
+            const r = await fetchWithRetry(`${API}/auth/verify`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, otp }),
             });
@@ -201,7 +217,7 @@ function LoginStep({ onSuccess, onSwitchSignup }) {
         if (!email || !pass) { setError('Enter email and password.'); return; }
         setLoading(true); setError('');
         try {
-            const r = await fetch(`${API}/auth/login`, {
+            const r = await fetchWithRetry(`${API}/auth/login`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password: pass }),
             });
