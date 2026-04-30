@@ -1,3 +1,17 @@
+"""
+Email service for AuraScore.
+
+Priority chain:
+  1. Resend HTTP API  — works on ALL hosts (no port block), free 3000/mo
+  2. SendGrid HTTP API — HTTP, works if key is set
+  3. Gmail SMTP       — local dev only (Render blocks SMTP ports)
+  4. Console fallback — prints OTP to server logs in dev
+
+To enable email in production set ONE of these on Render:
+  RESEND_API_KEY   →  get free key at https://resend.com (recommended)
+  SENDGRID_API_KEY →  get free key at https://sendgrid.com
+"""
+
 import os
 import json
 import threading
@@ -7,16 +21,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── SendGrid HTTP API (Bypasses Render SMTP Block) ──
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "").strip()
-# Use the verified sender email from SendGrid. If none set, fallback to Gmail user env.
-SENDGRID_SENDER = os.getenv("SENDGRID_SENDER", os.getenv("GMAIL_USER", "onboarding@aurascore.com")).strip()
-
-# ── Local Dev Fallback (Only works off-Render) ──
-GMAIL_USER = os.getenv("GMAIL_USER", "").strip()
+RESEND_API_KEY    = os.getenv("RESEND_API_KEY", "").strip()
+SENDGRID_API_KEY  = os.getenv("SENDGRID_API_KEY", "").strip()
+SENDGRID_SENDER   = os.getenv("SENDGRID_SENDER", "").strip()
+GMAIL_USER        = os.getenv("GMAIL_USER", "").strip()
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").strip()
 
+FROM_NAME  = "AuraScore"
+FROM_EMAIL = "onboarding@resend.dev"   # Works with Resend free tier; swap to your domain once verified
 
+
+# ─────────────────────────────────────────────────────────────────────────────
 def _build_otp_html(name: str, otp: str) -> str:
     return f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
@@ -53,136 +68,150 @@ def _build_otp_html(name: str, otp: str) -> str:
 </body></html>"""
 
 
-def _send_via_sendgrid(to_email: str, name: str, otp: str) -> bool:
-    """Send email using SendGrid's HTTP API to bypass Render's port blocking."""
-    html = _build_otp_html(name, otp)
-    
-    payload = {
-        "personalizations": [
-            {
-                "to": [{"email": to_email}],
-                "subject": "Your AuraScore Verification Code"
-            }
-        ],
-        "from": {
-            "email": SENDGRID_SENDER,
-            "name": "AuraScore"
-        },
-        "content": [
-            {
-                "type": "text/html",
-                "value": html
-            }
-        ]
-    }
-
-    req = urllib.request.Request(
-        "https://api.sendgrid.com/v3/mail/send",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {SENDGRID_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    
+# ─────────────────────────────────────────────────────────────────────────────
+def _http_post(url: str, headers: dict, payload: dict, label: str) -> bool:
+    """Generic JSON HTTP POST helper using only stdlib."""
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            # SendGrid returns 202 Accepted on success with no body
-            print(f"[EMAIL OK] SendGrid API sent to {to_email}")
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            print(f"[EMAIL OK] {label} → {resp.status}")
             return True
     except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
-        print(f"[EMAIL FAIL] SendGrid HTTP {e.code}: {body}")
+        body = e.read().decode(errors="replace") if e.fp else ""
+        print(f"[EMAIL FAIL] {label} HTTP {e.code}: {body[:300]}")
         return False
     except Exception as e:
-        print(f"[EMAIL FAIL] SendGrid error: {e}")
+        print(f"[EMAIL FAIL] {label}: {type(e).__name__}: {e}")
         return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+def _send_via_resend(to_email: str, name: str, otp: str) -> bool:
+    """
+    Resend HTTP API — pure HTTPS, not affected by SMTP port blocks.
+    Free tier: 3000 emails/month.  Get key at https://resend.com
+    """
+    if not RESEND_API_KEY:
+        return False
+
+    return _http_post(
+        url="https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+        payload={
+            "from": f"{FROM_NAME} <{FROM_EMAIL}>",
+            "to": [to_email],
+            "subject": "Your AuraScore Verification Code",
+            "html": _build_otp_html(name, otp),
+        },
+        label=f"Resend → {to_email}",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+def _send_via_sendgrid(to_email: str, name: str, otp: str) -> bool:
+    """SendGrid HTTP API fallback."""
+    if not SENDGRID_API_KEY:
+        return False
+
+    sender = SENDGRID_SENDER or GMAIL_USER or "noreply@aurascore.com"
+    return _http_post(
+        url="https://api.sendgrid.com/v3/mail/send",
+        headers={"Authorization": f"Bearer {SENDGRID_API_KEY}"},
+        payload={
+            "personalizations": [{"to": [{"email": to_email}],
+                                   "subject": "Your AuraScore Verification Code"}],
+            "from": {"email": sender, "name": FROM_NAME},
+            "content": [{"type": "text/html", "value": _build_otp_html(name, otp)}],
+        },
+        label=f"SendGrid → {to_email}",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
-    """Fallback: send via Gmail SMTP. Will hang or timeout on Render free tier."""
-    import smtplib
-    import ssl
+    """
+    Gmail SMTP — LOCAL DEV ONLY.
+    Render free tier blocks ports 465 & 587 — this will always fail there.
+    """
+    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+        return False
+
+    import smtplib, ssl
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
 
-    html = _build_otp_html(name, otp)
     msg = MIMEMultipart("alternative")
     msg["Subject"] = "Your AuraScore Verification Code"
-    msg["From"]    = f"AuraScore <{GMAIL_USER}>"
+    msg["From"]    = f"{FROM_NAME} <{GMAIL_USER}>"
     msg["To"]      = to_email
-    msg.attach(MIMEText(html, "html", "utf-8"))
+    msg.attach(MIMEText(_build_otp_html(name, otp), "html", "utf-8"))
 
-    def make_ssl_ctx():
-        """Try to get a working SSL context, fall back to unverified if cert chain broken."""
+    def _make_ctx():
         try:
             import certifi
-            ctx = ssl.create_default_context(cafile=certifi.where())
-            return ctx
+            return ssl.create_default_context(cafile=certifi.where())
         except Exception:
             pass
         try:
-            ctx = ssl.create_default_context()
-            return ctx
+            return ssl.create_default_context()
         except Exception:
-            pass
-        ctx = ssl._create_unverified_context()
-        return ctx
+            return ssl._create_unverified_context()
 
-    ctx = make_ssl_ctx()
-
-    for method in ("SSL", "STARTTLS"):
+    ctx = _make_ctx()
+    for method, port in (("SSL", 465), ("STARTTLS", 587)):
         try:
             if method == "SSL":
-                with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=8) as s:
+                with smtplib.SMTP_SSL("smtp.gmail.com", port, context=ctx, timeout=10) as s:
                     s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
                     s.sendmail(GMAIL_USER, to_email, msg.as_string())
             else:
-                with smtplib.SMTP("smtp.gmail.com", 587, timeout=8) as s:
+                with smtplib.SMTP("smtp.gmail.com", port, timeout=10) as s:
                     s.ehlo(); s.starttls(context=ctx); s.ehlo()
                     s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
                     s.sendmail(GMAIL_USER, to_email, msg.as_string())
-            print(f"[EMAIL OK] SMTP sent to {to_email} via {method}")
+            print(f"[EMAIL OK] SMTP {method} → {to_email}")
             return True
         except smtplib.SMTPAuthenticationError as e:
             print(f"[EMAIL AUTH FAIL] {e}")
-            return False
+            return False   # Wrong credentials — no point retrying
         except Exception as e:
-            print(f"[EMAIL] SMTP {method} failed: {e}")
+            print(f"[EMAIL] SMTP {method} failed: {type(e).__name__}: {e}")
+
     return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
 def send_otp_email(to_email: str, name: str, otp: str) -> bool:
     """
-    Sends email in a background thread and returns immediately.
-    Prioritizes SendGrid API, falls back to SMTP for local development.
+    Dispatch OTP email in a background thread (non-blocking).
+    Returns True immediately; actual delivery is async.
     """
-    # Dev mode: absolutely nothing configured
-    if not SENDGRID_API_KEY and not GMAIL_USER:
-        print(f"\n{'='*50}\n[DEV] OTP for {to_email}: {otp}\n{'='*50}\n")
-        return True
-
     def _worker():
-        try:
-            # 1. Try SendGrid HTTP API (Guaranteed to work on Render)
-            if SENDGRID_API_KEY:
-                if _send_via_sendgrid(to_email, name, otp):
-                    return
-                print("[EMAIL] SendGrid failed, trying SMTP fallback...")
+        print(f"[EMAIL] Sending OTP to {to_email}...")
 
-            # 2. Try Gmail SMTP (Will work locally, but fail on Render due to port block)
-            if GMAIL_USER and GMAIL_APP_PASSWORD:
-                if _send_via_smtp(to_email, name, otp):
-                    return
+        # 1. Resend (HTTP — works on Render free tier)
+        if _send_via_resend(to_email, name, otp):
+            return
 
-            print(f"[EMAIL FAIL] Could not deliver OTP to {to_email}")
-            print(f"[DEV FALLBACK] OTP code: {otp}")
-        except Exception as e:
-            print(f"[EMAIL THREAD ERROR] {e}")
-            print(f"[DEV FALLBACK] OTP code: {otp}")
+        # 2. SendGrid (HTTP — works on Render free tier)
+        if _send_via_sendgrid(to_email, name, otp):
+            return
 
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-    
+        # 3. Gmail SMTP (local dev only)
+        if _send_via_smtp(to_email, name, otp):
+            return
+
+        # 4. Console fallback — always print so OTP is never lost
+        print(f"\n{'='*55}")
+        print(f"[OTP FALLBACK]  to={to_email}  code={otp}")
+        print(f"  → No email provider configured or all failed.")
+        print(f"  → Set RESEND_API_KEY on Render to enable emails.")
+        print(f"{'='*55}\n")
+
+    threading.Thread(target=_worker, daemon=True).start()
     return True
