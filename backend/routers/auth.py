@@ -82,10 +82,16 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
         existing.name = body.name
         existing.hashed_password = hash_password(body.password)
         db.commit()
-        sent = send_otp_email(body.email, body.name, otp)
-        if not sent:
-            raise HTTPException(status_code=500, detail="Failed to send OTP email. Please verify Render GMAIL configurations.")
-        return {"message": "OTP resent. Check your email."}
+        # Send OTP in background — don't block the response
+        import threading
+        email_result = [False]
+        def _send(): email_result[0] = send_otp_email(body.email, body.name, otp)
+        t = threading.Thread(target=_send, daemon=True); t.start(); t.join(timeout=12)
+        resp = {"message": "OTP resent. Check your email."}
+        if not email_result[0]:
+            resp["fallback_otp"] = otp
+            resp["message"] = "OTP resent. Email delivery failed — use the code shown below."
+        return resp
 
     otp = generate_otp()
     user = User(
@@ -98,12 +104,18 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
     )
     db.add(user)
     db.commit()
-    
-    sent = send_otp_email(body.email, body.name, otp)
-    if not sent:
-        raise HTTPException(status_code=500, detail="Failed to send OTP email. Please verify Render GMAIL configurations.")
-    
-    return {"message": "Account created. Check your email for the 6-digit OTP."}
+
+    # Try to send email (wait up to 12s); if it fails return OTP in response
+    import threading
+    email_result = [False]
+    def _send(): email_result[0] = send_otp_email(body.email, body.name, otp)
+    t = threading.Thread(target=_send, daemon=True); t.start(); t.join(timeout=12)
+
+    resp = {"message": "Account created. Check your email for the 6-digit OTP."}
+    if not email_result[0]:
+        resp["fallback_otp"] = otp
+        resp["message"] = "Account created! Email delivery failed — use the code shown below."
+    return resp
 
 
 @router.post("/verify")

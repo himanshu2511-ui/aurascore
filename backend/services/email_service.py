@@ -2,14 +2,16 @@
 Email service for AuraScore.
 
 Priority chain:
-  1. Resend HTTP API  — works on ALL hosts (no port block), free 3000/mo
-  2. SendGrid HTTP API — HTTP, works if key is set
-  3. Gmail SMTP       — local dev only (Render blocks SMTP ports)
-  4. Console fallback — prints OTP to server logs in dev
+  1. Brevo (formerly Sendinblue) HTTP API — free, no domain needed, 300/day
+  2. Resend HTTP API                       — free 3000/mo (needs domain for arbitrary recipients)
+  3. SendGrid HTTP API                     — free 100/day
+  4. Gmail SMTP                            — local dev only (Render blocks SMTP ports)
+  5. Console fallback                      — prints OTP to server logs
 
-To enable email in production set ONE of these on Render:
-  RESEND_API_KEY   →  get free key at https://resend.com (recommended)
-  SENDGRID_API_KEY →  get free key at https://sendgrid.com
+Set ONE of these on Render env vars:
+  BREVO_API_KEY    → get free key at https://app.brevo.com  (recommended, no domain needed)
+  RESEND_API_KEY   → get free key at https://resend.com
+  SENDGRID_API_KEY → get free key at https://sendgrid.com
 """
 
 import os
@@ -21,14 +23,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+BREVO_API_KEY     = os.getenv("BREVO_API_KEY", "").strip()
+BREVO_SENDER      = os.getenv("BREVO_SENDER", os.getenv("GMAIL_USER", "")).strip()
 RESEND_API_KEY    = os.getenv("RESEND_API_KEY", "").strip()
 SENDGRID_API_KEY  = os.getenv("SENDGRID_API_KEY", "").strip()
 SENDGRID_SENDER   = os.getenv("SENDGRID_SENDER", "").strip()
 GMAIL_USER        = os.getenv("GMAIL_USER", "").strip()
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").strip()
 
-FROM_NAME  = "AuraScore"
-FROM_EMAIL = "onboarding@resend.dev"   # Works with Resend free tier; swap to your domain once verified
+FROM_NAME = "AuraScore"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -70,20 +73,19 @@ def _build_otp_html(name: str, otp: str) -> str:
 
 # ─────────────────────────────────────────────────────────────────────────────
 def _http_post(url: str, headers: dict, payload: dict, label: str) -> bool:
-    """Generic JSON HTTP POST helper using only stdlib."""
     try:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
+        data = json.dumps(payload).encode("utf-8")
+        req  = urllib.request.Request(
+            url, data=data,
             headers={**headers, "Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            print(f"[EMAIL OK] {label} → {resp.status}")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            print(f"[EMAIL OK] {label} status={resp.status}")
             return True
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace") if e.fp else ""
-        print(f"[EMAIL FAIL] {label} HTTP {e.code}: {body[:300]}")
+        print(f"[EMAIL FAIL] {label} HTTP {e.code}: {body[:400]}")
         return False
     except Exception as e:
         print(f"[EMAIL FAIL] {label}: {type(e).__name__}: {e}")
@@ -91,10 +93,36 @@ def _http_post(url: str, headers: dict, payload: dict, label: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def _send_via_brevo(to_email: str, name: str, otp: str) -> bool:
+    """
+    Brevo (Sendinblue) HTTP API.
+    FREE: 300 emails/day, NO domain verification needed.
+    Just verify sender email in Brevo dashboard once.
+    Sign up: https://app.brevo.com → API Keys → Create key.
+    """
+    if not BREVO_API_KEY:
+        return False
+
+    sender_email = BREVO_SENDER or GMAIL_USER or "noreply@aurascore.app"
+    return _http_post(
+        url="https://api.brevo.com/v3/smtp/email",
+        headers={"api-key": BREVO_API_KEY},
+        payload={
+            "sender": {"name": FROM_NAME, "email": sender_email},
+            "to": [{"email": to_email, "name": name}],
+            "subject": "Your AuraScore Verification Code",
+            "htmlContent": _build_otp_html(name, otp),
+        },
+        label=f"Brevo→{to_email}",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 def _send_via_resend(to_email: str, name: str, otp: str) -> bool:
     """
-    Resend HTTP API — pure HTTPS, not affected by SMTP port blocks.
-    Free tier: 3000 emails/month.  Get key at https://resend.com
+    Resend HTTP API. FREE 3000/month.
+    NOTE: Without a verified domain, only sends to your own Resend account email.
+    Add domain at https://resend.com/domains for full functionality.
     """
     if not RESEND_API_KEY:
         return False
@@ -103,22 +131,20 @@ def _send_via_resend(to_email: str, name: str, otp: str) -> bool:
         url="https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
         payload={
-            "from": f"{FROM_NAME} <{FROM_EMAIL}>",
+            "from": f"{FROM_NAME} <onboarding@resend.dev>",
             "to": [to_email],
             "subject": "Your AuraScore Verification Code",
             "html": _build_otp_html(name, otp),
         },
-        label=f"Resend → {to_email}",
+        label=f"Resend→{to_email}",
     )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def _send_via_sendgrid(to_email: str, name: str, otp: str) -> bool:
-    """SendGrid HTTP API fallback."""
     if not SENDGRID_API_KEY:
         return False
-
-    sender = SENDGRID_SENDER or GMAIL_USER or "noreply@aurascore.com"
+    sender = SENDGRID_SENDER or GMAIL_USER or "noreply@aurascore.app"
     return _http_post(
         url="https://api.sendgrid.com/v3/mail/send",
         headers={"Authorization": f"Bearer {SENDGRID_API_KEY}"},
@@ -128,41 +154,30 @@ def _send_via_sendgrid(to_email: str, name: str, otp: str) -> bool:
             "from": {"email": sender, "name": FROM_NAME},
             "content": [{"type": "text/html", "value": _build_otp_html(name, otp)}],
         },
-        label=f"SendGrid → {to_email}",
+        label=f"SendGrid→{to_email}",
     )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
-    """
-    Gmail SMTP — LOCAL DEV ONLY.
-    Render free tier blocks ports 465 & 587 — this will always fail there.
-    """
+    """Gmail SMTP — LOCAL DEV ONLY. Render free tier blocks all SMTP ports."""
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         return False
-
     import smtplib, ssl
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
-
     msg = MIMEMultipart("alternative")
     msg["Subject"] = "Your AuraScore Verification Code"
     msg["From"]    = f"{FROM_NAME} <{GMAIL_USER}>"
     msg["To"]      = to_email
     msg.attach(MIMEText(_build_otp_html(name, otp), "html", "utf-8"))
-
-    def _make_ctx():
+    def _ctx():
         try:
-            import certifi
-            return ssl.create_default_context(cafile=certifi.where())
-        except Exception:
-            pass
-        try:
-            return ssl.create_default_context()
-        except Exception:
-            return ssl._create_unverified_context()
-
-    ctx = _make_ctx()
+            import certifi; return ssl.create_default_context(cafile=certifi.where())
+        except Exception: pass
+        try: return ssl.create_default_context()
+        except Exception: return ssl._create_unverified_context()
+    ctx = _ctx()
     for method, port in (("SSL", 465), ("STARTTLS", 587)):
         try:
             if method == "SSL":
@@ -174,44 +189,37 @@ def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
                     s.ehlo(); s.starttls(context=ctx); s.ehlo()
                     s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
                     s.sendmail(GMAIL_USER, to_email, msg.as_string())
-            print(f"[EMAIL OK] SMTP {method} → {to_email}")
+            print(f"[EMAIL OK] SMTP {method}→{to_email}")
             return True
         except smtplib.SMTPAuthenticationError as e:
-            print(f"[EMAIL AUTH FAIL] {e}")
-            return False   # Wrong credentials — no point retrying
+            print(f"[EMAIL AUTH FAIL] {e}"); return False
         except Exception as e:
             print(f"[EMAIL] SMTP {method} failed: {type(e).__name__}: {e}")
-
     return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def send_otp_email(to_email: str, name: str, otp: str) -> bool:
     """
-    Dispatch OTP email in a background thread (non-blocking).
-    Returns True immediately; actual delivery is async.
+    Try all email providers synchronously.
+    Returns True if any provider succeeded, False if all failed.
+    Caller should surface OTP to the user when this returns False.
     """
-    def _worker():
-        print(f"[EMAIL] Sending OTP to {to_email}...")
+    print(f"[EMAIL] Attempting delivery to {to_email}...")
 
-        # 1. Resend (HTTP — works on Render free tier)
-        if _send_via_resend(to_email, name, otp):
-            return
+    if _send_via_brevo(to_email, name, otp):
+        return True
+    if _send_via_resend(to_email, name, otp):
+        return True
+    if _send_via_sendgrid(to_email, name, otp):
+        return True
+    if _send_via_smtp(to_email, name, otp):
+        return True
 
-        # 2. SendGrid (HTTP — works on Render free tier)
-        if _send_via_sendgrid(to_email, name, otp):
-            return
-
-        # 3. Gmail SMTP (local dev only)
-        if _send_via_smtp(to_email, name, otp):
-            return
-
-        # 4. Console fallback — always print so OTP is never lost
-        print(f"\n{'='*55}")
-        print(f"[OTP FALLBACK]  to={to_email}  code={otp}")
-        print(f"  → No email provider configured or all failed.")
-        print(f"  → Set RESEND_API_KEY on Render to enable emails.")
-        print(f"{'='*55}\n")
-
-    threading.Thread(target=_worker, daemon=True).start()
-    return True
+    # All providers failed — log OTP so it's never lost
+    print(f"\n{'='*55}")
+    print(f"[OTP FALLBACK] email={to_email}  otp={otp}")
+    print(f"  All email providers failed or unconfigured.")
+    print(f"  Set BREVO_API_KEY on Render to enable emails.")
+    print(f"{'='*55}\n")
+    return False

@@ -88,7 +88,8 @@ function SignupStep({ onSuccess, onSwitchLogin }) {
             });
             const data = await r.json();
             if (!r.ok) throw new Error(data.detail || 'Signup failed');
-            onSuccess(email, name, gender);
+            // Pass fallback_otp if email delivery failed
+            onSuccess(email, name, gender, data.fallback_otp || null);
         } catch (e) { setError(e.message); }
         setLoading(false);
     };
@@ -134,8 +135,8 @@ function SignupStep({ onSuccess, onSwitchLogin }) {
 }
 
 // ── Step 2: OTP Verify ────────────────────────────────────────────────────
-function OtpStep({ email, name, onSuccess, onResend }) {
-    const [otp, setOtp] = useState('');
+function OtpStep({ email, name, fallbackOtp, onSuccess, onResend }) {
+    const [otp, setOtp] = useState(fallbackOtp || '');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [resent, setResent] = useState(false);
@@ -156,10 +157,14 @@ function OtpStep({ email, name, onSuccess, onResend }) {
     };
 
     const handleResend = async () => {
-        await fetch(`${API}/auth/resend-otp`, {
+        const r = await fetchWithRetry(`${API}/auth/signup`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email }),
+            body: JSON.stringify({ email, name, password: '__resend__', gender: 'male' }),
         });
+        const data = await r.json();
+        if (data.fallback_otp) {
+            setOtp(data.fallback_otp);
+        }
         setResent(true);
         setTimeout(() => setResent(false), 5000);
     };
@@ -170,6 +175,25 @@ function OtpStep({ email, name, onSuccess, onResend }) {
             <p style={{ color: '#6b7280', fontSize: '0.88rem', marginBottom: '0.8rem' }}>
                 We sent a 6-digit code to <strong style={{ color: '#f0c040' }}>{email}</strong>
             </p>
+
+            {/* Fallback OTP banner — shown when email delivery fails */}
+            {fallbackOtp && (
+                <div style={{
+                    background: 'rgba(240,192,64,0.12)', border: '2px solid rgba(240,192,64,0.6)',
+                    borderRadius: 14, padding: '1rem 1.2rem', marginBottom: '1.2rem', textAlign: 'center',
+                }}>
+                    <p style={{ color: '#f0c040', fontWeight: 700, fontSize: '0.8rem', margin: '0 0 6px', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                        ⚠️ Email delivery failed — use this code:
+                    </p>
+                    <div style={{ fontSize: '2.2rem', fontWeight: 900, letterSpacing: '10px', color: '#f0c040', fontFamily: 'monospace' }}>
+                        {fallbackOtp}
+                    </div>
+                    <p style={{ color: '#6b7280', fontSize: '0.72rem', margin: '6px 0 0' }}>
+                        It's already filled in the field below. Just click Verify.
+                    </p>
+                </div>
+            )}
+
             <p style={{ color: '#4b5563', fontSize: '0.78rem', marginBottom: '1.8rem' }}>
                 💡 No email? Check your spam folder or check the backend terminal for the OTP (dev mode).
             </p>
@@ -251,11 +275,13 @@ export default function AuthPage() {
     const [pendingEmail, setPendingEmail] = useState('');
     const [pendingName, setPendingName] = useState('');
     const [pendingGender, setPendingGender] = useState('male');
+    const [pendingFallbackOtp, setPendingFallbackOtp] = useState(null);
 
-    const handleSignupSuccess = (email, name, gender) => {
+    const handleSignupSuccess = (email, name, gender, fallbackOtp) => {
         setPendingEmail(email);
         setPendingName(name);
         setPendingGender(gender || 'male');
+        setPendingFallbackOtp(fallbackOtp || null);
         setStep('otp');
     };
 
@@ -308,6 +334,7 @@ export default function AuthPage() {
                             <OtpStep
                                 email={pendingEmail}
                                 name={pendingName}
+                                fallbackOtp={pendingFallbackOtp}
                                 onSuccess={handleVerifySuccess}
                                 onResend={() => { }}
                             />
