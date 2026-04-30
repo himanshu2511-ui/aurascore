@@ -2,9 +2,9 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 
-let API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-if (API.endsWith('/')) API = API.slice(0, -1);
-if (!API.startsWith('http')) API = `https://${API}`;
+// API base — empty string uses Vite proxy in dev (proxies /auth/* to localhost:8000)
+// In production, set VITE_API_URL or configure your reverse proxy
+const API = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 
 const slide = {
@@ -134,7 +134,7 @@ function OtpStep({ email, name, onSuccess, onResend }) {
             });
             const data = await r.json();
             if (!r.ok) throw new Error(data.detail || 'Verification failed');
-            onSuccess(data.access_token, { name: data.user_name, email: data.user_email });
+            onSuccess(data.access_token, { id: data.user_id, name: data.user_name, email: data.user_email, gender: data.user_gender || 'male' });
         } catch (e) { setError(e.message); }
         setLoading(false);
     };
@@ -207,7 +207,7 @@ function LoginStep({ onSuccess, onSwitchSignup }) {
             });
             const data = await r.json();
             if (!r.ok) throw new Error(data.detail || 'Login failed');
-            onSuccess(data.access_token, { name: data.user_name, email: data.user_email });
+            onSuccess(data.access_token, { id: data.user_id, name: data.user_name, email: data.user_email, gender: data.user_gender || 'male' });
         } catch (e) { setError(e.message); }
         setLoading(false);
     };
@@ -243,8 +243,8 @@ export default function AuthPage() {
         setStep('otp');
     };
 
-    const handleVerifySuccess = (token, userData) => login(token, { ...userData, gender: pendingGender });
-    const handleLoginSuccess  = (token, userData) => login(token, { ...userData, gender: userData.user_gender || 'male' });
+    const handleVerifySuccess = (token, userData) => login(token, { ...userData });
+    const handleLoginSuccess  = (token, userData) => login(token, { ...userData });
 
     return (
         <div style={{

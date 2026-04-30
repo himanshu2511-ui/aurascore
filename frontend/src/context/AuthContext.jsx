@@ -3,7 +3,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-    const [user, setUser]     = useState(null);   // { name, email, gender }
+    const [user, setUser]     = useState(null);   // { id, name, email, gender }
     const [token, setToken]   = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -12,8 +12,10 @@ export function AuthProvider({ children }) {
         const savedToken = localStorage.getItem('aura_token');
         const savedUser  = localStorage.getItem('aura_user');
         if (savedToken && savedUser) {
-            setToken(savedToken);
-            setUser(JSON.parse(savedUser));
+            try {
+                setToken(savedToken);
+                setUser(JSON.parse(savedUser));
+            } catch { /* corrupted storage — ignore */ }
         }
         setLoading(false);
     }, []);

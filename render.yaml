@@ -6,3 +6,9 @@ services:
     envVars:
       - key: DATABASE_URL
         value: sqlite:///./aurascore.db
+      - key: JWT_SECRET
+        generateValue: true         # Render auto-generates a secure value
+      - key: GMAIL_USER
+        sync: false                 # Set manually in Render dashboard
+      - key: GMAIL_APP_PASSWORD
+        sync: false                 # Set manually in Render dashboard

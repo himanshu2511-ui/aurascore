@@ -41,6 +41,7 @@ class TokenResponse(BaseModel):
     user_name: str
     user_email: str
     user_gender: str = "male"
+    user_id: int = 0
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -128,6 +129,7 @@ def verify_email(body: VerifyRequest, db: Session = Depends(get_db)):
         user_name=user.name,
         user_email=user.email,
         user_gender=user.gender or "male",
+        user_id=user.id,
     )
 
 
@@ -145,6 +147,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         user_name=user.name,
         user_email=user.email,
         user_gender=user.gender or "male",
+        user_id=user.id,
     )
 
 

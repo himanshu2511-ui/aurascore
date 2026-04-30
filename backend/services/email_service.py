@@ -114,16 +114,33 @@ def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
     msg["To"]      = to_email
     msg.attach(MIMEText(html, "html", "utf-8"))
 
+    def make_ssl_ctx():
+        """Try to get a working SSL context, fall back to unverified if cert chain broken."""
+        try:
+            import certifi
+            ctx = ssl.create_default_context(cafile=certifi.where())
+            return ctx
+        except Exception:
+            pass
+        try:
+            ctx = ssl.create_default_context()
+            return ctx
+        except Exception:
+            pass
+        ctx = ssl._create_unverified_context()
+        return ctx
+
+    ctx = make_ssl_ctx()
+
     for method in ("SSL", "STARTTLS"):
         try:
             if method == "SSL":
-                ctx = ssl.create_default_context()
                 with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=8) as s:
                     s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
                     s.sendmail(GMAIL_USER, to_email, msg.as_string())
             else:
                 with smtplib.SMTP("smtp.gmail.com", 587, timeout=8) as s:
-                    s.ehlo(); s.starttls(context=ssl.create_default_context()); s.ehlo()
+                    s.ehlo(); s.starttls(context=ctx); s.ehlo()
                     s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
                     s.sendmail(GMAIL_USER, to_email, msg.as_string())
             print(f"[EMAIL OK] SMTP sent to {to_email} via {method}")

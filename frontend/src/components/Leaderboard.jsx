@@ -123,11 +123,10 @@ export default function Leaderboard() {
   const load = useCallback(() => {
     setLoading(true);
     setError('');
-    let API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-    if (API.endsWith('/')) API = API.slice(0, -1);
-    if (!API.startsWith('http')) API = `https://${API}`;
 
-    fetch(`${API}/api/leaderboard`, {
+    // Use VITE_API_URL in production; relative path works in dev via Vite proxy
+    const baseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+    fetch(`${baseUrl}/api/leaderboard`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     .then(r => {
