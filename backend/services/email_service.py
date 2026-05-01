@@ -1,32 +1,41 @@
 """
 AuraScore Email Service
 =======================
-Uses HTTP APIs only (no SMTP) — works on Render free tier.
+HTTP-only providers (no SMTP ports — works on Render free tier).
 
-Priority chain:
-  1. Brevo HTTP API    — free 300/day, no domain needed, just API key
-  2. Resend HTTP API   — free 3000/mo, needs verified domain for arbitrary recipients
-  3. Gmail SMTP        — local dev only (Render blocks SMTP ports 465/587)
-  4. Console fallback  — always prints OTP to logs
+RECOMMENDED → Mailersend (zero setup, pre-verified trial domain, any recipient):
+  1. Sign up at https://app.mailersend.com (use GitHub login)
+  2. API Tokens → Generate token → copy it
+  3. Domains → note your trial domain like "trial-xxx.mlsnd.com"
+  4. Set on Render:
+       MAILERSEND_API_KEY  = mlsn_xxxxxxxx
+       MAILERSEND_DOMAIN   = trial-xxx.mlsnd.com
 
-Required env vars (set ONE on Render):
-  BREVO_API_KEY   — from https://app.brevo.com → Settings → API Keys
-  BREVO_SENDER    — a verified sender email in your Brevo account
-  RESEND_API_KEY  — from https://resend.com
+FALLBACK → Brevo (needs sender verified in Brevo dashboard once):
+  Set BREVO_API_KEY + BREVO_SENDER
+
+FALLBACK → Resend (needs verified domain for arbitrary recipients):
+  Set RESEND_API_KEY
 """
 
 import os
-import threading
-import requests as _requests
+import requests as _req
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Credentials ──────────────────────────────────────────────────────────────
+MAILERSEND_API_KEY = os.getenv("MAILERSEND_API_KEY", "").strip()
+MAILERSEND_DOMAIN  = os.getenv("MAILERSEND_DOMAIN", "").strip()   # e.g. trial-xxx.mlsnd.com
+
 BREVO_API_KEY      = os.getenv("BREVO_API_KEY", "").strip()
 BREVO_SENDER       = os.getenv("BREVO_SENDER", "").strip()
+
 RESEND_API_KEY     = os.getenv("RESEND_API_KEY", "").strip()
+
 SENDGRID_API_KEY   = os.getenv("SENDGRID_API_KEY", "").strip()
 SENDGRID_SENDER    = os.getenv("SENDGRID_SENDER", "").strip()
+
 GMAIL_USER         = os.getenv("GMAIL_USER", "").strip()
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").strip()
 
@@ -34,151 +43,141 @@ FROM_NAME = "AuraScore"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-def _build_otp_html(name: str, otp: str) -> str:
+def _otp_html(name: str, otp: str) -> str:
     return f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#080810;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#080810;padding:40px 20px;">
-    <tr><td align="center">
-      <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;
-             background:#0f0f1a;border-radius:20px;overflow:hidden;
-             border:1px solid rgba(240,192,64,0.25);">
-        <tr>
-          <td style="background:linear-gradient(135deg,#9b5de5,#f0c040);padding:28px;text-align:center;">
-            <div style="font-size:32px;font-weight:900;color:#111;">AuraScore</div>
-            <div style="font-size:13px;color:#333;margin-top:4px;">AI Personal Glow-Up Coach</div>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:36px 32px;">
-            <p style="color:#9ca3af;margin:0 0 6px;">Hi {name},</p>
-            <h2 style="color:#f0c040;margin:0 0 20px;font-weight:800;">Verify your email</h2>
-            <p style="color:#6b7280;line-height:1.7;margin:0 0 28px;">
-              Your verification code expires in <strong style="color:#f0c040;">15 minutes</strong>.
-            </p>
-            <div style="background:rgba(240,192,64,0.08);border:2px solid rgba(240,192,64,0.35);
-                        border-radius:14px;padding:28px;text-align:center;margin-bottom:28px;">
-              <div style="font-size:48px;font-weight:900;letter-spacing:14px;
-                          color:#f0c040;font-family:monospace;">{otp}</div>
-            </div>
-            <p style="color:#4b5563;font-size:12px;">If you didn't sign up for AuraScore, ignore this email.</p>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
-  </table>
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#080810;padding:40px 20px;">
+<tr><td align="center">
+<table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;
+  background:#0f0f1a;border-radius:20px;overflow:hidden;
+  border:1px solid rgba(240,192,64,0.25);">
+  <tr>
+    <td style="background:linear-gradient(135deg,#9b5de5,#f0c040);padding:28px;text-align:center;">
+      <div style="font-size:32px;font-weight:900;color:#111;">AuraScore</div>
+      <div style="font-size:13px;color:#333;margin-top:4px;">AI Personal Glow-Up Coach</div>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:36px 32px;">
+      <p style="color:#9ca3af;margin:0 0 6px;">Hi {name},</p>
+      <h2 style="color:#f0c040;margin:0 0 20px;font-weight:800;">Verify your email</h2>
+      <p style="color:#6b7280;line-height:1.7;margin:0 0 28px;">
+        Your verification code expires in <strong style="color:#f0c040;">15 minutes</strong>.
+      </p>
+      <div style="background:rgba(240,192,64,0.08);border:2px solid rgba(240,192,64,0.35);
+          border-radius:14px;padding:28px;text-align:center;margin-bottom:28px;">
+        <div style="font-size:48px;font-weight:900;letter-spacing:14px;
+            color:#f0c040;font-family:monospace;">{otp}</div>
+      </div>
+      <p style="color:#4b5563;font-size:12px;">If you didn't sign up for AuraScore, ignore this.</p>
+    </td>
+  </tr>
+</table>
+</td></tr>
+</table>
 </body></html>"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-def _send_via_brevo(to_email: str, name: str, otp: str) -> bool:
+def _post(label, url, headers, payload):
+    """HTTP POST with full error logging."""
+    try:
+        r = _req.post(url, json=payload, headers=headers, timeout=15)
+        if r.status_code in (200, 201, 202):
+            print(f"[EMAIL OK] {label} status={r.status_code}")
+            return True
+        print(f"[EMAIL FAIL] {label} HTTP {r.status_code}: {r.text[:600]}")
+        return False
+    except Exception as e:
+        print(f"[EMAIL FAIL] {label} exception: {type(e).__name__}: {e}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+def _via_mailersend(to_email, name, otp):
     """
-    Brevo Transactional Email HTTP API.
-    Pure HTTPS — not affected by Render's SMTP port block.
+    Mailersend — RECOMMENDED for Render free tier.
+    Pre-verified trial domain, sends to ANY email, zero domain setup needed.
     """
+    if not MAILERSEND_API_KEY or not MAILERSEND_DOMAIN:
+        print("[EMAIL] Mailersend: MAILERSEND_API_KEY or MAILERSEND_DOMAIN not set.")
+        return False
+    from_email = f"noreply@{MAILERSEND_DOMAIN}"
+    return _post(
+        f"Mailersend→{to_email}",
+        "https://api.mailersend.com/v1/email",
+        {"Authorization": f"Bearer {MAILERSEND_API_KEY}", "Content-Type": "application/json"},
+        {
+            "from":    {"email": from_email, "name": FROM_NAME},
+            "to":      [{"email": to_email,  "name": name}],
+            "subject": "Your AuraScore Verification Code",
+            "html":    _otp_html(name, otp),
+        },
+    )
+
+
+def _via_brevo(to_email, name, otp):
+    """Brevo HTTP API — needs sender verified once in Brevo dashboard."""
     if not BREVO_API_KEY:
-        print("[EMAIL] Brevo: BREVO_API_KEY not set, skipping.")
+        print("[EMAIL] Brevo: BREVO_API_KEY not set.")
         return False
-
-    sender_email = BREVO_SENDER or GMAIL_USER
-    if not sender_email:
-        print("[EMAIL] Brevo: BREVO_SENDER not set. "
-              "Set BREVO_SENDER to a verified sender email in your Brevo account.")
+    sender = BREVO_SENDER or GMAIL_USER
+    if not sender:
+        print("[EMAIL] Brevo: BREVO_SENDER not set.")
         return False
-
-    payload = {
-        "sender":      {"name": FROM_NAME, "email": sender_email},
-        "to":          [{"email": to_email, "name": name}],
-        "subject":     "Your AuraScore Verification Code",
-        "htmlContent": _build_otp_html(name, otp),
-    }
-
-    try:
-        resp = _requests.post(
-            "https://api.brevo.com/v3/smtp/email",
-            json=payload,
-            headers={"api-key": BREVO_API_KEY, "accept": "application/json"},
-            timeout=15,
-        )
-        if resp.status_code in (200, 201, 202):
-            print(f"[EMAIL OK] Brevo → {to_email} (status {resp.status_code})")
-            return True
-        else:
-            print(f"[EMAIL FAIL] Brevo {resp.status_code}: {resp.text[:500]}")
-            return False
-    except Exception as e:
-        print(f"[EMAIL FAIL] Brevo exception: {type(e).__name__}: {e}")
-        return False
+    return _post(
+        f"Brevo→{to_email}",
+        "https://api.brevo.com/v3/smtp/email",
+        {"api-key": BREVO_API_KEY, "accept": "application/json", "content-type": "application/json"},
+        {
+            "sender":      {"name": FROM_NAME, "email": sender},
+            "to":          [{"email": to_email, "name": name}],
+            "subject":     "Your AuraScore Verification Code",
+            "htmlContent": _otp_html(name, otp),
+        },
+    )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-def _send_via_resend(to_email: str, name: str, otp: str) -> bool:
-    """
-    Resend HTTP API.
-    NOTE: Without a verified domain, onboarding@resend.dev only sends to
-    your OWN Resend account email. To send to anyone, verify a domain at resend.com/domains
-    """
+def _via_resend(to_email, name, otp):
+    """Resend — needs verified domain to send to arbitrary recipients."""
     if not RESEND_API_KEY:
-        print("[EMAIL] Resend: RESEND_API_KEY not set, skipping.")
+        print("[EMAIL] Resend: RESEND_API_KEY not set.")
         return False
-
-    payload = {
-        "from":    f"{FROM_NAME} <onboarding@resend.dev>",
-        "to":      [to_email],
-        "subject": "Your AuraScore Verification Code",
-        "html":    _build_otp_html(name, otp),
-    }
-
-    try:
-        resp = _requests.post(
-            "https://api.resend.com/emails",
-            json=payload,
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-            timeout=15,
-        )
-        if resp.status_code in (200, 201, 202):
-            print(f"[EMAIL OK] Resend → {to_email} (status {resp.status_code})")
-            return True
-        else:
-            print(f"[EMAIL FAIL] Resend {resp.status_code}: {resp.text[:500]}")
-            return False
-    except Exception as e:
-        print(f"[EMAIL FAIL] Resend exception: {type(e).__name__}: {e}")
-        return False
+    return _post(
+        f"Resend→{to_email}",
+        "https://api.resend.com/emails",
+        {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+        {
+            "from":    f"{FROM_NAME} <onboarding@resend.dev>",
+            "to":      [to_email],
+            "subject": "Your AuraScore Verification Code",
+            "html":    _otp_html(name, otp),
+        },
+    )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-def _send_via_sendgrid(to_email: str, name: str, otp: str) -> bool:
+def _via_sendgrid(to_email, name, otp):
     if not SENDGRID_API_KEY:
         return False
     sender = SENDGRID_SENDER or GMAIL_USER
     if not sender:
         return False
-    try:
-        resp = _requests.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            json={
-                "personalizations": [{"to": [{"email": to_email}],
-                                       "subject": "Your AuraScore Verification Code"}],
-                "from": {"email": sender, "name": FROM_NAME},
-                "content": [{"type": "text/html", "value": _build_otp_html(name, otp)}],
-            },
-            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}"},
-            timeout=15,
-        )
-        if resp.status_code in (200, 201, 202):
-            print(f"[EMAIL OK] SendGrid → {to_email}")
-            return True
-        print(f"[EMAIL FAIL] SendGrid {resp.status_code}: {resp.text[:500]}")
-        return False
-    except Exception as e:
-        print(f"[EMAIL FAIL] SendGrid exception: {type(e).__name__}: {e}")
-        return False
+    return _post(
+        f"SendGrid→{to_email}",
+        "https://api.sendgrid.com/v3/mail/send",
+        {"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
+        {
+            "personalizations": [{"to": [{"email": to_email}],
+                                   "subject": "Your AuraScore Verification Code"}],
+            "from":    {"email": sender, "name": FROM_NAME},
+            "content": [{"type": "text/html", "value": _otp_html(name, otp)}],
+        },
+    )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
-    """Gmail SMTP — local dev only. Render free tier blocks SMTP ports 465/587."""
+def _via_smtp(to_email, name, otp):
+    """Gmail SMTP — local dev only. Render free tier blocks ports 465 & 587."""
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         return False
     import smtplib, ssl
@@ -188,7 +187,7 @@ def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
     msg["Subject"] = "Your AuraScore Verification Code"
     msg["From"]    = f"{FROM_NAME} <{GMAIL_USER}>"
     msg["To"]      = to_email
-    msg.attach(MIMEText(_build_otp_html(name, otp), "html", "utf-8"))
+    msg.attach(MIMEText(_otp_html(name, otp), "html", "utf-8"))
     def _ctx():
         try:
             import certifi; return ssl.create_default_context(cafile=certifi.where())
@@ -200,119 +199,144 @@ def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
         try:
             if method == "SSL":
                 with smtplib.SMTP_SSL("smtp.gmail.com", port, context=ctx, timeout=10) as s:
-                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD); s.sendmail(GMAIL_USER, to_email, msg.as_string())
+                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                    s.sendmail(GMAIL_USER, to_email, msg.as_string())
             else:
                 with smtplib.SMTP("smtp.gmail.com", port, timeout=10) as s:
                     s.ehlo(); s.starttls(context=ctx); s.ehlo()
-                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD); s.sendmail(GMAIL_USER, to_email, msg.as_string())
-            print(f"[EMAIL OK] SMTP {method} → {to_email}")
+                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                    s.sendmail(GMAIL_USER, to_email, msg.as_string())
+            print(f"[EMAIL OK] SMTP {method}→{to_email}")
             return True
         except smtplib.SMTPAuthenticationError as e:
             print(f"[EMAIL AUTH FAIL] {e}"); return False
         except Exception as e:
-            print(f"[EMAIL] SMTP {method} port {port} failed: {type(e).__name__}: {e}")
+            print(f"[EMAIL] SMTP {method}/{port} failed: {type(e).__name__}: {e}")
     return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def send_otp_email(to_email: str, name: str, otp: str) -> bool:
     """
-    Try all email providers synchronously. Returns True if any succeeded.
-    The caller should surface fallback_otp to the user when this returns False.
+    Try all providers. Returns True if any succeeded.
+    Caller includes fallback_otp in response when this returns False.
     """
-    print(f"[EMAIL] Starting delivery attempt to {to_email}")
-    print(f"[EMAIL] Config — BREVO_KEY={'set' if BREVO_API_KEY else 'NOT SET'} | "
-          f"BREVO_SENDER={BREVO_SENDER or 'NOT SET'} | "
-          f"RESEND_KEY={'set' if RESEND_API_KEY else 'NOT SET'} | "
-          f"SENDGRID_KEY={'set' if SENDGRID_API_KEY else 'NOT SET'}")
+    print(f"[EMAIL] Sending to {to_email} | "
+          f"Mailersend={'✓' if MAILERSEND_API_KEY else '✗'} "
+          f"Brevo={'✓' if BREVO_API_KEY else '✗'} "
+          f"Resend={'✓' if RESEND_API_KEY else '✗'} "
+          f"Gmail={'✓' if GMAIL_USER else '✗'}")
 
-    if _send_via_brevo(to_email, name, otp):
-        return True
-    if _send_via_resend(to_email, name, otp):
-        return True
-    if _send_via_sendgrid(to_email, name, otp):
-        return True
-    if _send_via_smtp(to_email, name, otp):
-        return True
+    if _via_mailersend(to_email, name, otp): return True
+    if _via_brevo(to_email, name, otp):      return True
+    if _via_resend(to_email, name, otp):     return True
+    if _via_sendgrid(to_email, name, otp):   return True
+    if _via_smtp(to_email, name, otp):       return True
 
-    print(f"\n{'='*60}")
-    print(f"[OTP FALLBACK] to={to_email}  otp={otp}")
-    print(f"  All email providers failed. Set BREVO_API_KEY on Render.")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*60}\n[OTP FALLBACK] to={to_email}  otp={otp}\n{'='*60}\n")
     return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def test_email_config(to_email: str) -> dict:
-    """
-    Synchronous email test that returns verbose results.
-    Called by /api/test-email endpoint for debugging.
-    """
+    """Called by /api/test-email — synchronous test returning verbose results."""
     import time
 
-    results = {
-        "config": {
-            "brevo_key_set":     bool(BREVO_API_KEY),
-            "brevo_sender":      BREVO_SENDER or "(not set)",
-            "resend_key_set":    bool(RESEND_API_KEY),
-            "sendgrid_key_set":  bool(SENDGRID_API_KEY),
-            "gmail_user":        GMAIL_USER or "(not set)",
-        },
-        "results": {},
+    cfg = {
+        "mailersend_key_set": bool(MAILERSEND_API_KEY),
+        "mailersend_domain":  MAILERSEND_DOMAIN or "(not set)",
+        "brevo_key_set":      bool(BREVO_API_KEY),
+        "brevo_sender":       BREVO_SENDER or GMAIL_USER or "(not set)",
+        "resend_key_set":     bool(RESEND_API_KEY),
+        "sendgrid_key_set":   bool(SENDGRID_API_KEY),
+        "gmail_user":         GMAIL_USER or "(not set)",
     }
 
-    test_otp = "123456"
-    test_name = "Test"
+    results = {}
 
-    # Test Brevo
-    if BREVO_API_KEY and (BREVO_SENDER or GMAIL_USER):
-        sender = BREVO_SENDER or GMAIL_USER
+    # Test Mailersend
+    if MAILERSEND_API_KEY and MAILERSEND_DOMAIN:
         try:
             t = time.time()
-            resp = _requests.post(
+            r = _req.post(
+                "https://api.mailersend.com/v1/email",
+                json={
+                    "from":    {"email": f"noreply@{MAILERSEND_DOMAIN}", "name": FROM_NAME},
+                    "to":      [{"email": to_email, "name": "Test"}],
+                    "subject": "AuraScore Email Test",
+                    "html":    "<p>Email test from AuraScore. OTP: <b>123456</b></p>",
+                },
+                headers={"Authorization": f"Bearer {MAILERSEND_API_KEY}"},
+                timeout=15,
+            )
+            results["mailersend"] = {
+                "ok": r.status_code in (200, 201, 202),
+                "status": r.status_code,
+                "response": r.text[:400],
+                "ms": int((time.time()-t)*1000),
+            }
+        except Exception as e:
+            results["mailersend"] = {"ok": False, "error": str(e)}
+    else:
+        results["mailersend"] = {"ok": False, "reason": "MAILERSEND_API_KEY or MAILERSEND_DOMAIN not set"}
+
+    # Test Brevo
+    sender = BREVO_SENDER or GMAIL_USER
+    if BREVO_API_KEY and sender:
+        try:
+            t = time.time()
+            r = _req.post(
                 "https://api.brevo.com/v3/smtp/email",
                 json={
                     "sender":      {"name": FROM_NAME, "email": sender},
-                    "to":          [{"email": to_email, "name": test_name}],
+                    "to":          [{"email": to_email, "name": "Test"}],
                     "subject":     "AuraScore Email Test",
-                    "htmlContent": f"<p>Test OTP: <b>{test_otp}</b></p>",
+                    "htmlContent": "<p>Email test. OTP: <b>123456</b></p>",
                 },
                 headers={"api-key": BREVO_API_KEY, "accept": "application/json"},
                 timeout=15,
             )
-            results["results"]["brevo"] = {
-                "status_code": resp.status_code,
-                "ok": resp.status_code in (200, 201, 202),
-                "response": resp.text[:300],
-                "elapsed_ms": int((time.time() - t) * 1000),
+            results["brevo"] = {
+                "ok": r.status_code in (200, 201, 202),
+                "status": r.status_code,
+                "response": r.text[:400],
+                "ms": int((time.time()-t)*1000),
             }
         except Exception as e:
-            results["results"]["brevo"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            results["brevo"] = {"ok": False, "error": str(e)}
     else:
-        results["results"]["brevo"] = {"ok": False, "error": "BREVO_API_KEY or BREVO_SENDER not configured"}
+        results["brevo"] = {"ok": False, "reason": "BREVO_API_KEY or sender not configured"}
 
     # Test Resend
     if RESEND_API_KEY:
         try:
             t = time.time()
-            resp = _requests.post(
+            r = _req.post(
                 "https://api.resend.com/emails",
                 json={"from": f"{FROM_NAME} <onboarding@resend.dev>",
                       "to": [to_email], "subject": "AuraScore Email Test",
-                      "html": f"<p>Test OTP: <b>{test_otp}</b></p>"},
+                      "html": "<p>Email test. OTP: <b>123456</b></p>"},
                 headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
                 timeout=15,
             )
-            results["results"]["resend"] = {
-                "status_code": resp.status_code,
-                "ok": resp.status_code in (200, 201, 202),
-                "response": resp.text[:300],
-                "elapsed_ms": int((time.time() - t) * 1000),
+            results["resend"] = {
+                "ok": r.status_code in (200, 201, 202),
+                "status": r.status_code,
+                "response": r.text[:400],
+                "ms": int((time.time()-t)*1000),
             }
         except Exception as e:
-            results["results"]["resend"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            results["resend"] = {"ok": False, "error": str(e)}
     else:
-        results["results"]["resend"] = {"ok": False, "error": "RESEND_API_KEY not configured"}
+        results["resend"] = {"ok": False, "reason": "RESEND_API_KEY not set"}
 
-    results["overall_success"] = any(v.get("ok") for v in results["results"].values())
-    return results
+    return {
+        "config": cfg,
+        "results": results,
+        "any_success": any(v.get("ok") for v in results.values()),
+        "recommendation": (
+            "Set MAILERSEND_API_KEY + MAILERSEND_DOMAIN from https://app.mailersend.com"
+            if not cfg["mailersend_key_set"] else
+            "Check 'results' above for exact error from each provider"
+        ),
+    }
