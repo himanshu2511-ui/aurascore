@@ -1,14 +1,33 @@
+databases:
+  - name: aurascore-db
+    plan: free
+    region: singapore
+
 services:
   - type: web
     name: aurascore-api
     env: docker
     rootDir: backend
+    region: singapore
+    plan: free
     envVars:
       - key: DATABASE_URL
-        value: sqlite:///./aurascore.db
+        fromDatabase:
+          name: aurascore-db
+          property: connectionString   # Render auto-injects the PostgreSQL URL
       - key: JWT_SECRET
-        generateValue: true         # Render auto-generates a secure value
+        generateValue: true
       - key: GMAIL_USER
-        sync: false                 # Set manually in Render dashboard
+        sync: false
       - key: GMAIL_APP_PASSWORD
-        sync: false                 # Set manually in Render dashboard
+        sync: false
+      - key: MAILERSEND_API_KEY
+        sync: false
+      - key: MAILERSEND_DOMAIN
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
