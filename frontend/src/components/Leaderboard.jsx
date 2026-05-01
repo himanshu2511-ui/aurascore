@@ -123,14 +123,12 @@ export default function Leaderboard() {
   const load = useCallback(() => {
     setLoading(true);
     setError('');
-
-    // Use VITE_API_URL in production; relative path works in dev via Vite proxy
     const baseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-    fetch(`${baseUrl}/api/leaderboard`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    fetch(`${baseUrl}/api/leaderboard`, { headers })
     .then(r => {
-      if (!r.ok) throw new Error('Failed to fetch leaderboard');
+      if (!r.ok) throw new Error(`Server error ${r.status}`);
       return r.json();
     })
     .then(data => { setUsers(data); setLoading(false); })
@@ -250,7 +248,8 @@ export default function Leaderboard() {
           {filtered.length === 0 && (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#4b5563' }}>
               <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🌟</div>
-              No scores yet — be the first!
+              <div style={{ fontWeight: 700, color: '#6b7280', marginBottom: '0.5rem' }}>No scores on the board yet.</div>
+              <div style={{ fontSize: '0.82rem', color: '#4b5563' }}>Complete a scan on the <strong style={{color:'#f0c040'}}>Scan tab</strong> to appear here!</div>
             </div>
           )}
           {filtered.map((u, i) => (
