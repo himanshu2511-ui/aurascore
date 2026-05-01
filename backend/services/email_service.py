@@ -1,34 +1,33 @@
 """
-Email service for AuraScore.
+AuraScore Email Service
+=======================
+Uses HTTP APIs only (no SMTP) — works on Render free tier.
 
 Priority chain:
-  1. Brevo (formerly Sendinblue) HTTP API — free, no domain needed, 300/day
-  2. Resend HTTP API                       — free 3000/mo (needs domain for arbitrary recipients)
-  3. SendGrid HTTP API                     — free 100/day
-  4. Gmail SMTP                            — local dev only (Render blocks SMTP ports)
-  5. Console fallback                      — prints OTP to server logs
+  1. Brevo HTTP API    — free 300/day, no domain needed, just API key
+  2. Resend HTTP API   — free 3000/mo, needs verified domain for arbitrary recipients
+  3. Gmail SMTP        — local dev only (Render blocks SMTP ports 465/587)
+  4. Console fallback  — always prints OTP to logs
 
-Set ONE of these on Render env vars:
-  BREVO_API_KEY    → get free key at https://app.brevo.com  (recommended, no domain needed)
-  RESEND_API_KEY   → get free key at https://resend.com
-  SENDGRID_API_KEY → get free key at https://sendgrid.com
+Required env vars (set ONE on Render):
+  BREVO_API_KEY   — from https://app.brevo.com → Settings → API Keys
+  BREVO_SENDER    — a verified sender email in your Brevo account
+  RESEND_API_KEY  — from https://resend.com
 """
 
 import os
-import json
 import threading
-import urllib.request
-import urllib.error
+import requests as _requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-BREVO_API_KEY     = os.getenv("BREVO_API_KEY", "").strip()
-BREVO_SENDER      = os.getenv("BREVO_SENDER", os.getenv("GMAIL_USER", "")).strip()
-RESEND_API_KEY    = os.getenv("RESEND_API_KEY", "").strip()
-SENDGRID_API_KEY  = os.getenv("SENDGRID_API_KEY", "").strip()
-SENDGRID_SENDER   = os.getenv("SENDGRID_SENDER", "").strip()
-GMAIL_USER        = os.getenv("GMAIL_USER", "").strip()
+BREVO_API_KEY      = os.getenv("BREVO_API_KEY", "").strip()
+BREVO_SENDER       = os.getenv("BREVO_SENDER", "").strip()
+RESEND_API_KEY     = os.getenv("RESEND_API_KEY", "").strip()
+SENDGRID_API_KEY   = os.getenv("SENDGRID_API_KEY", "").strip()
+SENDGRID_SENDER    = os.getenv("SENDGRID_SENDER", "").strip()
+GMAIL_USER         = os.getenv("GMAIL_USER", "").strip()
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").strip()
 
 FROM_NAME = "AuraScore"
@@ -62,7 +61,7 @@ def _build_otp_html(name: str, otp: str) -> str:
               <div style="font-size:48px;font-weight:900;letter-spacing:14px;
                           color:#f0c040;font-family:monospace;">{otp}</div>
             </div>
-            <p style="color:#4b5563;font-size:12px;">If you didn't sign up, ignore this email.</p>
+            <p style="color:#4b5563;font-size:12px;">If you didn't sign up for AuraScore, ignore this email.</p>
           </td>
         </tr>
       </table>
@@ -72,95 +71,114 @@ def _build_otp_html(name: str, otp: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-def _http_post(url: str, headers: dict, payload: dict, label: str) -> bool:
-    try:
-        data = json.dumps(payload).encode("utf-8")
-        req  = urllib.request.Request(
-            url, data=data,
-            headers={**headers, "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            print(f"[EMAIL OK] {label} status={resp.status}")
-            return True
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace") if e.fp else ""
-        print(f"[EMAIL FAIL] {label} HTTP {e.code}: {body[:400]}")
-        return False
-    except Exception as e:
-        print(f"[EMAIL FAIL] {label}: {type(e).__name__}: {e}")
-        return False
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 def _send_via_brevo(to_email: str, name: str, otp: str) -> bool:
     """
-    Brevo (Sendinblue) HTTP API.
-    FREE: 300 emails/day, NO domain verification needed.
-    Just verify sender email in Brevo dashboard once.
-    Sign up: https://app.brevo.com → API Keys → Create key.
+    Brevo Transactional Email HTTP API.
+    Pure HTTPS — not affected by Render's SMTP port block.
     """
     if not BREVO_API_KEY:
+        print("[EMAIL] Brevo: BREVO_API_KEY not set, skipping.")
         return False
 
-    sender_email = BREVO_SENDER or GMAIL_USER or "noreply@aurascore.app"
-    return _http_post(
-        url="https://api.brevo.com/v3/smtp/email",
-        headers={"api-key": BREVO_API_KEY},
-        payload={
-            "sender": {"name": FROM_NAME, "email": sender_email},
-            "to": [{"email": to_email, "name": name}],
-            "subject": "Your AuraScore Verification Code",
-            "htmlContent": _build_otp_html(name, otp),
-        },
-        label=f"Brevo→{to_email}",
-    )
+    sender_email = BREVO_SENDER or GMAIL_USER
+    if not sender_email:
+        print("[EMAIL] Brevo: BREVO_SENDER not set. "
+              "Set BREVO_SENDER to a verified sender email in your Brevo account.")
+        return False
+
+    payload = {
+        "sender":      {"name": FROM_NAME, "email": sender_email},
+        "to":          [{"email": to_email, "name": name}],
+        "subject":     "Your AuraScore Verification Code",
+        "htmlContent": _build_otp_html(name, otp),
+    }
+
+    try:
+        resp = _requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            json=payload,
+            headers={"api-key": BREVO_API_KEY, "accept": "application/json"},
+            timeout=15,
+        )
+        if resp.status_code in (200, 201, 202):
+            print(f"[EMAIL OK] Brevo → {to_email} (status {resp.status_code})")
+            return True
+        else:
+            print(f"[EMAIL FAIL] Brevo {resp.status_code}: {resp.text[:500]}")
+            return False
+    except Exception as e:
+        print(f"[EMAIL FAIL] Brevo exception: {type(e).__name__}: {e}")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def _send_via_resend(to_email: str, name: str, otp: str) -> bool:
     """
-    Resend HTTP API. FREE 3000/month.
-    NOTE: Without a verified domain, only sends to your own Resend account email.
-    Add domain at https://resend.com/domains for full functionality.
+    Resend HTTP API.
+    NOTE: Without a verified domain, onboarding@resend.dev only sends to
+    your OWN Resend account email. To send to anyone, verify a domain at resend.com/domains
     """
     if not RESEND_API_KEY:
+        print("[EMAIL] Resend: RESEND_API_KEY not set, skipping.")
         return False
 
-    return _http_post(
-        url="https://api.resend.com/emails",
-        headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-        payload={
-            "from": f"{FROM_NAME} <onboarding@resend.dev>",
-            "to": [to_email],
-            "subject": "Your AuraScore Verification Code",
-            "html": _build_otp_html(name, otp),
-        },
-        label=f"Resend→{to_email}",
-    )
+    payload = {
+        "from":    f"{FROM_NAME} <onboarding@resend.dev>",
+        "to":      [to_email],
+        "subject": "Your AuraScore Verification Code",
+        "html":    _build_otp_html(name, otp),
+    }
+
+    try:
+        resp = _requests.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+            timeout=15,
+        )
+        if resp.status_code in (200, 201, 202):
+            print(f"[EMAIL OK] Resend → {to_email} (status {resp.status_code})")
+            return True
+        else:
+            print(f"[EMAIL FAIL] Resend {resp.status_code}: {resp.text[:500]}")
+            return False
+    except Exception as e:
+        print(f"[EMAIL FAIL] Resend exception: {type(e).__name__}: {e}")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def _send_via_sendgrid(to_email: str, name: str, otp: str) -> bool:
     if not SENDGRID_API_KEY:
         return False
-    sender = SENDGRID_SENDER or GMAIL_USER or "noreply@aurascore.app"
-    return _http_post(
-        url="https://api.sendgrid.com/v3/mail/send",
-        headers={"Authorization": f"Bearer {SENDGRID_API_KEY}"},
-        payload={
-            "personalizations": [{"to": [{"email": to_email}],
-                                   "subject": "Your AuraScore Verification Code"}],
-            "from": {"email": sender, "name": FROM_NAME},
-            "content": [{"type": "text/html", "value": _build_otp_html(name, otp)}],
-        },
-        label=f"SendGrid→{to_email}",
-    )
+    sender = SENDGRID_SENDER or GMAIL_USER
+    if not sender:
+        return False
+    try:
+        resp = _requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            json={
+                "personalizations": [{"to": [{"email": to_email}],
+                                       "subject": "Your AuraScore Verification Code"}],
+                "from": {"email": sender, "name": FROM_NAME},
+                "content": [{"type": "text/html", "value": _build_otp_html(name, otp)}],
+            },
+            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}"},
+            timeout=15,
+        )
+        if resp.status_code in (200, 201, 202):
+            print(f"[EMAIL OK] SendGrid → {to_email}")
+            return True
+        print(f"[EMAIL FAIL] SendGrid {resp.status_code}: {resp.text[:500]}")
+        return False
+    except Exception as e:
+        print(f"[EMAIL FAIL] SendGrid exception: {type(e).__name__}: {e}")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
-    """Gmail SMTP — LOCAL DEV ONLY. Render free tier blocks all SMTP ports."""
+    """Gmail SMTP — local dev only. Render free tier blocks SMTP ports 465/587."""
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         return False
     import smtplib, ssl
@@ -182,30 +200,31 @@ def _send_via_smtp(to_email: str, name: str, otp: str) -> bool:
         try:
             if method == "SSL":
                 with smtplib.SMTP_SSL("smtp.gmail.com", port, context=ctx, timeout=10) as s:
-                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-                    s.sendmail(GMAIL_USER, to_email, msg.as_string())
+                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD); s.sendmail(GMAIL_USER, to_email, msg.as_string())
             else:
                 with smtplib.SMTP("smtp.gmail.com", port, timeout=10) as s:
                     s.ehlo(); s.starttls(context=ctx); s.ehlo()
-                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-                    s.sendmail(GMAIL_USER, to_email, msg.as_string())
-            print(f"[EMAIL OK] SMTP {method}→{to_email}")
+                    s.login(GMAIL_USER, GMAIL_APP_PASSWORD); s.sendmail(GMAIL_USER, to_email, msg.as_string())
+            print(f"[EMAIL OK] SMTP {method} → {to_email}")
             return True
         except smtplib.SMTPAuthenticationError as e:
             print(f"[EMAIL AUTH FAIL] {e}"); return False
         except Exception as e:
-            print(f"[EMAIL] SMTP {method} failed: {type(e).__name__}: {e}")
+            print(f"[EMAIL] SMTP {method} port {port} failed: {type(e).__name__}: {e}")
     return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 def send_otp_email(to_email: str, name: str, otp: str) -> bool:
     """
-    Try all email providers synchronously.
-    Returns True if any provider succeeded, False if all failed.
-    Caller should surface OTP to the user when this returns False.
+    Try all email providers synchronously. Returns True if any succeeded.
+    The caller should surface fallback_otp to the user when this returns False.
     """
-    print(f"[EMAIL] Attempting delivery to {to_email}...")
+    print(f"[EMAIL] Starting delivery attempt to {to_email}")
+    print(f"[EMAIL] Config — BREVO_KEY={'set' if BREVO_API_KEY else 'NOT SET'} | "
+          f"BREVO_SENDER={BREVO_SENDER or 'NOT SET'} | "
+          f"RESEND_KEY={'set' if RESEND_API_KEY else 'NOT SET'} | "
+          f"SENDGRID_KEY={'set' if SENDGRID_API_KEY else 'NOT SET'}")
 
     if _send_via_brevo(to_email, name, otp):
         return True
@@ -216,10 +235,84 @@ def send_otp_email(to_email: str, name: str, otp: str) -> bool:
     if _send_via_smtp(to_email, name, otp):
         return True
 
-    # All providers failed — log OTP so it's never lost
-    print(f"\n{'='*55}")
-    print(f"[OTP FALLBACK] email={to_email}  otp={otp}")
-    print(f"  All email providers failed or unconfigured.")
-    print(f"  Set BREVO_API_KEY on Render to enable emails.")
-    print(f"{'='*55}\n")
+    print(f"\n{'='*60}")
+    print(f"[OTP FALLBACK] to={to_email}  otp={otp}")
+    print(f"  All email providers failed. Set BREVO_API_KEY on Render.")
+    print(f"{'='*60}\n")
     return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+def test_email_config(to_email: str) -> dict:
+    """
+    Synchronous email test that returns verbose results.
+    Called by /api/test-email endpoint for debugging.
+    """
+    import time
+
+    results = {
+        "config": {
+            "brevo_key_set":     bool(BREVO_API_KEY),
+            "brevo_sender":      BREVO_SENDER or "(not set)",
+            "resend_key_set":    bool(RESEND_API_KEY),
+            "sendgrid_key_set":  bool(SENDGRID_API_KEY),
+            "gmail_user":        GMAIL_USER or "(not set)",
+        },
+        "results": {},
+    }
+
+    test_otp = "123456"
+    test_name = "Test"
+
+    # Test Brevo
+    if BREVO_API_KEY and (BREVO_SENDER or GMAIL_USER):
+        sender = BREVO_SENDER or GMAIL_USER
+        try:
+            t = time.time()
+            resp = _requests.post(
+                "https://api.brevo.com/v3/smtp/email",
+                json={
+                    "sender":      {"name": FROM_NAME, "email": sender},
+                    "to":          [{"email": to_email, "name": test_name}],
+                    "subject":     "AuraScore Email Test",
+                    "htmlContent": f"<p>Test OTP: <b>{test_otp}</b></p>",
+                },
+                headers={"api-key": BREVO_API_KEY, "accept": "application/json"},
+                timeout=15,
+            )
+            results["results"]["brevo"] = {
+                "status_code": resp.status_code,
+                "ok": resp.status_code in (200, 201, 202),
+                "response": resp.text[:300],
+                "elapsed_ms": int((time.time() - t) * 1000),
+            }
+        except Exception as e:
+            results["results"]["brevo"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    else:
+        results["results"]["brevo"] = {"ok": False, "error": "BREVO_API_KEY or BREVO_SENDER not configured"}
+
+    # Test Resend
+    if RESEND_API_KEY:
+        try:
+            t = time.time()
+            resp = _requests.post(
+                "https://api.resend.com/emails",
+                json={"from": f"{FROM_NAME} <onboarding@resend.dev>",
+                      "to": [to_email], "subject": "AuraScore Email Test",
+                      "html": f"<p>Test OTP: <b>{test_otp}</b></p>"},
+                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                timeout=15,
+            )
+            results["results"]["resend"] = {
+                "status_code": resp.status_code,
+                "ok": resp.status_code in (200, 201, 202),
+                "response": resp.text[:300],
+                "elapsed_ms": int((time.time() - t) * 1000),
+            }
+        except Exception as e:
+            results["results"]["resend"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    else:
+        results["results"]["resend"] = {"ok": False, "error": "RESEND_API_KEY not configured"}
+
+    results["overall_success"] = any(v.get("ok") for v in results["results"].values())
+    return results

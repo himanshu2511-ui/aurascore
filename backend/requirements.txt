@@ -12,3 +12,4 @@ pillow
 pydantic
 passlib[argon2]
 certifi
+requests

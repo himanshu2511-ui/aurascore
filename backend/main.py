@@ -36,7 +36,18 @@ app.include_router(leaderboard_router)
 # ── Health ────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "2.1"}
+    return {"status": "ok", "version": "2.2"}
+
+# ── Email Debug (no auth — for testing email config on Render) ────────────
+@app.get("/api/test-email")
+async def test_email(to: str = "test@example.com"):
+    """
+    Tests email delivery to the given address and returns verbose results.
+    Usage: GET /api/test-email?to=your@email.com
+    """
+    from services.email_service import test_email_config
+    result = test_email_config(to)
+    return result
 
 # ── Analysis (protected) ──────────────────────────────────────────────────
 @app.post("/api/analyze", response_model=GlowUpScorecard)
